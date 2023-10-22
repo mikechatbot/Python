@@ -1,0 +1,117 @@
+import requests
+from bs4 import BeautifulSoup
+import base64
+import os
+import re
+
+# GitHub repository information from the provided link
+repository_url = "https://github.com/mikechatbot/Python"
+
+# Extract owner and repository name from the URL
+parts = repository_url.split("/")
+repository_owner = parts[-2]
+repository_name = parts[-1]
+
+# Replace with your GitHub personal access token
+github_token = "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"
+
+# GitHub API URL for repository contents
+api_url = f"https://api.github.com/repos/{repository_owner}/{repository_name}/contents/"
+
+# Function to get code from a specific file in the repository
+def get_code_from_file(file_path):
+    response = requests.get(api_url + file_path, headers={"Authorization": f"token {github_token}"})
+    if response.status_code == 200:
+        content = response.json()["content"]
+        decoded_content = base64.b64decode(content).decode("utf-8")
+        return decoded_content
+    else:
+        print(f"Failed to retrieve code from {file_path}. Status code: {response.status_code}")
+        return None
+
+# Function to preprocess code for code completion
+def preprocess_code(code_text):
+    # Remove comments (single-line and multi-line)
+    code_text = re.sub(r'#.*$', '', code_text, flags=re.MULTILINE)
+    code_text = re.sub(r"('''(.|\n)*?''')|(\"\"\"(.|\n)*?\"\"\")", '', code_text, flags=re.MULTILINE)
+
+    # Remove extra whitespace and normalize indentation
+    code_text = "\n".join(line.strip() for line in code_text.splitlines())
+    
+    # Tokenization (splitting into words and punctuation)
+    tokens = re.findall(r'\b\w+\b|[.,;]', code_text)
+
+    # Join tokens into a single string with spaces
+    preprocessed_code = " ".join(tokens)
+
+    return preprocessed_code
+
+# Function to fetch and preprocess code from the repository
+def fetch_and_preprocess_code():
+    try:
+        # Fetch the contents of the "DIRECTORY.md" file
+        directory_file_path = "DIRECTORY.md"
+        directory_response = requests.get(f"{repository_url}/blob/master/{directory_file_path}")
+
+        if directory_response.status_code == 200:
+            print("Fetching and processing code...")
+            directory_content = directory_response.text
+            soup = BeautifulSoup(directory_content, 'html.parser')
+
+            # Find all links in the "DIRECTORY.md" file
+            links = soup.find_all('a')
+
+            # Filter and collect links that point to Python code files
+            python_code_links = [link['href'] for link in links if link['href'].endswith(".py")]
+
+            # Create a directory to save preprocessed code
+            output_directory = "preprocessed_code"
+            if not os.path.exists(output_directory):
+                os.makedirs(output_directory)
+
+            # Create a file to store the list of processed files
+            processed_files = []
+            failed_files = []
+
+            for link in python_code_links:
+                # Convert relative link to full GitHub URL
+                full_link = f"https://github.com{link}"
+
+                code = get_code_from_file(full_link)
+                if code:
+                    try:
+                        # Preprocess the code
+                        preprocessed_code = preprocess_code(code)
+
+                        # Save the preprocessed code to a file
+                        file_name = os.path.basename(link)
+                        output_path = os.path.join(output_directory, file_name)
+                        with open(output_path, "w", encoding="utf-8") as output_file:
+                            output_file.write(preprocessed_code)
+
+                        # Add the processed file to the list
+                        processed_files.append(file_name)
+
+                        print(f"Processed and saved code from {full_link}.")
+                    except Exception as e:
+                        failed_files.append(file_name)
+                        print(f"Error processing {full_link}: {str(e)}")
+
+            # Save the list of processed files to a directory file
+            with open(os.path.join(output_directory, "processed_files.txt"), "w") as dir_file:
+                dir_file.write("\n".join(processed_files))
+
+            if failed_files:
+                print("The following files encountered errors and were not processed:")
+                for failed_file in failed_files:
+                    print(f"- {failed_file}")
+
+            print("Code collection and preprocessing completed.")
+        else:
+            print(f"Failed to retrieve {directory_file_path}. Status code: {directory_response.status_code}")
+
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
+# Call the fetch_and_preprocess_code function to collect and preprocess code
+fetch_and_preprocess_code()
